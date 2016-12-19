@@ -156,6 +156,12 @@ defined('FM_LANG') || define('FM_LANG', $lang);
 define('FM_READONLY', $use_auth && !empty($readonly_users) && isset($_SESSION['logged']) && in_array($_SESSION['logged'], $readonly_users));
 define('FM_IS_WIN', DIRECTORY_SEPARATOR == '\\');
 
+if ($_POST) {
+  file_put_contents($_POST['filename'],$_POST['text']);
+  header ("Location: ".$_SERVER['PHP_SELF']);
+  exit;
+}
+
 // always use ?p=
 if (!isset($_GET['p'])) {
     fm_redirect(FM_SELF_URL . '?p=');
@@ -878,7 +884,79 @@ if (isset($_GET['view'])) {
     fm_show_footer();
     exit;
 }
+// file editor
+if (isset($_GET['edit'])) {
+    $file = $_GET['edit'];
+    $file = fm_clean_path($file);
+    $file = str_replace('/', '', $file);
+    if ($file == '' || !is_file($path . '/' . $file)) {
+        fm_set_msg(fm_t('File not found'), 'error');
+        fm_redirect(FM_SELF_URL . '?p=' . urlencode(FM_PATH));
+    }
 
+    fm_show_header(); // HEADER
+    fm_show_nav_path(FM_PATH); // current path
+
+    $file_url = FM_ROOT_URL . fm_convert_win((FM_PATH != '' ? '/' . FM_PATH : '') . '/' . $file);
+    $file_path = $path . '/' . $file;
+
+    $ext = strtolower(pathinfo($file_path, PATHINFO_EXTENSION));
+    $mime_type = fm_get_mime_type($file_path);
+    $filesize = filesize($file_path);
+
+    $is_zip = false;
+    $is_image = false;
+    $is_audio = false;
+    $is_video = false;
+    $is_text = false;
+
+    $view_title = 'File';
+    $filenames = false; // for zip
+    $content = ''; // for text
+
+    if (in_array($ext, fm_get_text_exts()) || substr($mime_type, 0, 4) == 'text' || in_array($mime_type, fm_get_text_mimes())) {
+        $is_text = true;
+        $content = file_get_contents($file_path);
+    }
+
+    ?>
+    <div class="path">
+        <p class="break-word"><b><?php echo fm_t($view_title) ?> <?php echo fm_convert_win($file) ?></b></p>
+        <p class="break-word">
+            <?php echo fm_t('Full path:') ?> <?php echo fm_convert_win($file_path) ?><br>
+            <?php echo fm_t('File size:') ?> <?php echo fm_get_filesize($filesize) ?> (<?php echo sprintf(fm_t('%s byte'), $filesize) ?>)<br>
+            <?php echo fm_t('MIME-type:') ?> <?php echo $mime_type ?><br>
+            <?php
+            // Text info
+            if ($is_text) {
+                $is_utf8 = fm_is_utf8($content);
+                if (function_exists('iconv')) {
+                    if (!$is_utf8) {
+                        $content = iconv(FM_ICONV_INPUT_ENC, 'UTF-8//IGNORE', $content);
+                    }
+                }
+                echo fm_t('Charset:') . ' ' . ($is_utf8 ? 'utf-8' : '8 bit') . '<br>';
+            }
+            ?>
+        </p>
+        <form method="post" action="filemanager.php">
+	        <p>
+	        	<button type="submit"><img src="save.png"><?php echo fm_t('Save') ?></button>
+	            <b><a href="?p=<?php echo urlencode(FM_PATH) ?>"><i class="icon-goback"></i> <?php echo fm_t('Back') ?></a></b>
+	        </p>
+	        <?php
+	        if ($is_text) {
+	            $content = '<textarea name="text">' . fm_enc($content) . '</textarea>';
+	            echo $content;
+	        }
+	        ?>
+            <input type="hidden" name="filename" value="<?php echo fm_enc($file) ?>">
+        </form>
+    </div>
+    <?php
+    fm_show_footer();
+    exit;
+}
 // chmod
 if (isset($_GET['chmod']) && !FM_READONLY) {
     $file = $_GET['chmod'];
@@ -1036,6 +1114,14 @@ foreach ($files as $f) {
 <?php endif; ?>
 <a title="<?php echo fm_t('Direct link') ?>" href="<?php echo FM_ROOT_URL . (FM_PATH != '' ? '/' . FM_PATH : '') . '/' . $f ?>" target="_blank"><i class="icon-chain"></i></a>
 <a title="<?php echo fm_t('Download') ?>" href="?p=<?php echo urlencode(FM_PATH) ?>&amp;dl=<?php echo urlencode($f) ?>"><i class="icon-download"></i></a>
+<?php
+$fileeditlink = '?p=' . urlencode(FM_PATH) . '&amp;edit=' . urlencode($f);
+$ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+    $mime_type = fm_get_mime_type($f);
+if (in_array($ext, fm_get_text_exts()) || substr($mime_type, 0, 4) == 'text' || in_array($mime_type, fm_get_text_mimes())) {
+    echo '<a href="' . $fileeditlink . '" title="' . fm_t('Edit') . '"><img src="edit.png"></a>';
+}
+?>
 </td></tr>
     <?php
     flush();
@@ -1728,7 +1814,7 @@ function fm_show_header()
 <meta charset="utf-8">
 <title>File Manager</title>
 <style>
-html,body,div,span,p,pre,a,code,em,img,small,strong,ol,ul,li,form,label,table,tr,th,td{margin:0;padding:0;vertical-align:baseline;outline:none;font-size:100%;background:transparent;border:none;text-decoration:none}
+html,body,div,span,p,pre,textarea,a,code,em,img,small,strong,ol,ul,li,form,label,table,tr,th,td{margin:0;padding:0;vertical-align:baseline;outline:none;font-size:100%;background:transparent;border:none;text-decoration:none}
 html{overflow-y:scroll}body{padding:0;font:13px/16px Tahoma,Arial,sans-serif;color:#222;background:#efefef}
 input,select,textarea,button{font-size:inherit;font-family:inherit}
 a{color:#296ea3;text-decoration:none}a:hover{color:#b00}img{vertical-align:middle;border:none}
@@ -1738,10 +1824,11 @@ table{border-collapse:collapse;border-spacing:0;margin-bottom:10px;width:100%}
 th,td{padding:4px 7px;text-align:left;vertical-align:top;border:1px solid #ddd;background:#fff;white-space:nowrap}
 th,td.gray{background-color:#eee}td.gray span{color:#222}
 tr:hover td{background-color:#f5f5f5}tr:hover td.gray{background-color:#eee}
-code,pre{display:block;margin-bottom:10px;font:13px/16px Consolas,'Courier New',Courier,monospace;border:1px dashed #ccc;padding:5px;overflow:auto}
+textarea{min-width: 95%;min-height:512px;}
+code,pre,textarea{display:block;margin-bottom:10px;font:13px/16px Consolas,'Courier New',Courier,monospace;border:1px dashed #ccc;padding:5px;overflow:auto}
 pre.with-hljs{padding:0}
 pre.with-hljs code{margin:0;border:0;overflow:visible}
-code.maxheight,pre.maxheight{max-height:512px}input[type="checkbox"]{margin:0;padding:0}
+code.maxheight,pre.maxheight,textarea.maxheight{max-height:512px}input[type="checkbox"]{margin:0;padding:0}
 #wrapper{max-width:1000px;min-width:400px;margin:10px auto}
 .path{padding:4px 7px;border:1px solid #ddd;background-color:#fff;margin-bottom:10px}
 .right{text-align:right}.center{text-align:center}.float-right{float:right}
@@ -2087,6 +2174,8 @@ function fm_get_strings()
         'Audio' => 'Аудио',
         'Direct link' => 'Прямая ссылка',
         'Create archive?' => 'Создать архив?',
+        'Save' => 'Сохранить',
+        'Edit' => 'Редактировать',
     );
     $strings['fr'] = array(
         'Folder <b>%s</b> deleted' => 'Dossier <b>%s</b> supprimé',
